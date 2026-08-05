@@ -20,4 +20,39 @@ contract: 实现 run(program) -> (regs, cycles)
 
 
 def run(program):
-    raise NotImplementedError("从这里开始写")
+    registers = list(range(32))
+
+    def execute(instructions, active):
+        cycles = 0
+        if not any(active):
+            return cycles
+
+        for instruction in instructions:
+            operation = instruction[0]
+            if operation in ("add", "mul"):
+                operand = instruction[1]
+                for lane, enabled in enumerate(active):
+                    if enabled:
+                        if operation == "add":
+                            registers[lane] += operand
+                        else:
+                            registers[lane] *= operand
+                cycles += 1
+            elif operation == "if_lt":
+                threshold, then_program, else_program = instruction[1:]
+                then_mask = [
+                    enabled and registers[lane] < threshold
+                    for lane, enabled in enumerate(active)
+                ]
+                else_mask = [
+                    enabled and not then_mask[lane]
+                    for lane, enabled in enumerate(active)
+                ]
+                cycles += execute(then_program, then_mask)
+                cycles += execute(else_program, else_mask)
+            else:
+                raise ValueError(f"unknown instruction: {operation}")
+        return cycles
+
+    cycles = execute(program, [True] * 32)
+    return registers, cycles

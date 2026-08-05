@@ -24,5 +24,50 @@ import tilelang
 import tilelang.language as T
 
 
+def _next_power_of_two(value: int) -> int:
+    return 1 << (value - 1).bit_length()
+
+
+_kernel_cache = {}
+
+
+def make_softmax(M: int, N: int):
+    block_N = _next_power_of_two(N)
+
+    @T.prim_func
+    def main(
+        X: T.Buffer((M, N), "float32"),
+        Y: T.Buffer((M, N), "float32"),
+    ):
+        with T.Kernel(M, threads=256) as row:
+            values = T.alloc_fragment((block_N,), "float32")
+            maximum = T.alloc_fragment((1,), "float32")
+            total = T.alloc_fragment((1,), "float32")
+
+            for column in T.Parallel(block_N):
+                values[column] = T.if_then_else(
+                    column < N, X[row, column], -T.infinity("float32")
+                )
+            T.reduce_max(values, maximum, dim=0, clear=True)
+            for column in T.Parallel(block_N):
+                values[column] = T.exp(values[column] - maximum[0])
+            T.reduce_sum(values, total, dim=0, clear=True)
+            for column in T.Parallel(block_N):
+                if column < N:
+                    Y[row, column] = values[column] / total[0]
+
+    return main
+
+
 def softmax(x: torch.Tensor) -> torch.Tensor:
-    raise NotImplementedError("从这里开始写")
+    if x.ndim != 2 or x.dtype != torch.float32 or not x.is_cuda:
+        raise ValueError("softmax expects a 2D float32 CUDA tensor")
+    rows, columns = x.shape
+    if columns == 0 or columns > 4096:
+        raise ValueError("row width must be in [1, 4096]")
+    key = (rows, columns, x.device.index)
+    if key not in _kernel_cache:
+        _kernel_cache[key] = tilelang.compile(
+            make_softmax(rows, columns), out_idx=[1]
+        )
+    return _kernel_cache[key](x)
