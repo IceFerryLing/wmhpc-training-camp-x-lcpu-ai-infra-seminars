@@ -39,11 +39,27 @@
 #define BLOCK 256
 
 __global__ void reduce_interleaved(const float *in, float *out) {
-    // TODO：从这里开始写（交错配对版本）
+    __shared__ float buf[BLOCK];
+    int tid = threadIdx.x;
+    buf[tid] = in[blockIdx.x * blockDim.x + tid];
+    __syncthreads();
+    for (int stride = 1; stride < blockDim.x; stride *= 2) {
+        if (tid % (2 * stride) == 0) buf[tid] += buf[tid + stride];
+        __syncthreads();
+    }
+    if (tid == 0) out[blockIdx.x] = buf[0];
 }
 
 __global__ void reduce_contiguous(const float *in, float *out) {
-    // TODO：从这里开始写（连续配对版本）
+    __shared__ float buf[BLOCK];
+    int tid = threadIdx.x;
+    buf[tid] = in[blockIdx.x * blockDim.x + tid];
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < stride) buf[tid] += buf[tid + stride];
+        __syncthreads();
+    }
+    if (tid == 0) out[blockIdx.x] = buf[0];
 }
 
 // ---------------- 以下是判测与计时，不要修改 ----------------
