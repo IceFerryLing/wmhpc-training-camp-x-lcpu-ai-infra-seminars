@@ -17,10 +17,32 @@
 #include <cstdint>
 
 // TODO: 实现四个函数。lane 0-31;A 的 i 0-15,B 的 i 0-7。
-static int a_row_of(int lane, int i) { (void)lane; (void)i; return 0; }
-static int a_col_of(int lane, int i) { (void)lane; (void)i; return 0; }
-static int b_row_of(int lane, int i) { (void)lane; (void)i; return 0; }  // k
-static int b_col_of(int lane, int i) { (void)lane; (void)i; return 0; }  // n
+static int a_row_of(int lane, int i) {
+    int quad = lane / 4;
+    int base_row = quad;
+    int offset_row = 8 * ((i % 8) / 4);
+    return base_row + offset_row;
+}
+
+static int a_col_of(int lane, int i) {
+    int lane_in_quad = lane % 4;
+    int col_lane = lane_in_quad * 4;
+    int col_block = (i / 8) * 16;
+    int col_off = i % 4;
+    return col_lane + col_block + col_off;
+}
+
+static int b_row_of(int lane, int i) {
+    int lane_in_quad = lane % 4;
+    int group_k = i / 4;
+    int off_k = i % 4;
+    return off_k + lane_in_quad * 4 + group_k * 16;
+}
+
+static int b_col_of(int lane, int i) {
+    int quad = lane / 4;
+    return quad;
+}
 
 // 以下为判测,不需要修改。表项 = row * 32 + col(A)/ k * 8 + n(B)。
 static const short A_POS[32 * 16] = {

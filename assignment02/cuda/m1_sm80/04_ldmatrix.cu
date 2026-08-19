@@ -27,13 +27,55 @@
 __device__ void load_manual(const uint8_t* sA, const uint8_t* sBk,
                             const uint8_t* sBn, unsigned (&a)[4],
                             unsigned (&b)[2]) {
-    (void)sA; (void)sBk; (void)sBn; (void)a; (void)b;
+    (void)sBn;
+    int lane = threadIdx.x;
+    int group = lane >> 2;
+    int tig = lane & 3;
+
+    a[0] = a[1] = a[2] = a[3] = 0;
+    b[0] = b[1] = 0;
+    for (int i = 0; i < 16; i++) {
+        int row = group + 8 * ((i % 8) / 4);
+        int col = tig * 4 + (i / 8) * 16 + (i % 4);
+        a[i / 4] |= (unsigned)sA[row * 32 + col] << (8 * (i % 4));
+    }
+    for (int i = 0; i < 8; i++) {
+        int row = tig * 4 + (i / 4) * 16 + (i % 4);
+        b[i / 4] |= (unsigned)sBk[row * 8 + group] << (8 * (i % 4));
+    }
 }
 
 __device__ void load_ldsm(const uint8_t* sA, const uint8_t* sBk,
                           const uint8_t* sBn, unsigned (&a)[4],
                           unsigned (&b)[2]) {
-    (void)sA; (void)sBk; (void)sBn; (void)a; (void)b;
+    (void)sBk;
+    int lane = threadIdx.x;
+
+    // Four 8x8 b16 matrices, ordered as A's top-left, bottom-left,
+    // top-right and bottom-right subtiles.  Each b16 contains two FP8
+    // values that are adjacent along K.
+    int matrix = lane >> 3;
+    int row = lane & 7;
+    int a_row = row + (matrix & 1) * 8;
+    int a_col_byte = (matrix >> 1) * 16;
+    unsigned a_addr = (unsigned)__cvta_generic_to_shared(
+        sA + a_row * 32 + a_col_byte);
+    asm volatile(
+        "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
+        : "=r"(a[0]), "=r"(a[1]), "=r"(a[2]), "=r"(a[3])
+        : "r"(a_addr));
+
+    // B is transposed while staging into sBn, so each row is one n and
+    // adjacent b16 values run along K.  The two matrices cover K=0..15
+    // and K=16..31 respectively; only lanes 0..15 supply row addresses.
+    int b_matrix = (lane >> 3) & 1;
+    int b_row = lane & 7;
+    unsigned b_addr = (unsigned)__cvta_generic_to_shared(
+        sBn + b_row * 32 + b_matrix * 16);
+    asm volatile(
+        "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0,%1}, [%2];\n"
+        : "=r"(b[0]), "=r"(b[1])
+        : "r"(b_addr));
 }
 
 template <bool USE_LDSM>
